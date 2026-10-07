@@ -1,11 +1,11 @@
 package broker
 
 import (
-	"context"
+	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"sync"
-	"time"
 	"uuid"
 
 	"github.com/pipit-org/pipit-balancer/client"
@@ -50,7 +50,6 @@ func New() *Broker {
 
 	bk.startWorkListener()
 	bk.startDispatchListener()
-	//bk.startHealthCheck()
 
 	return bk
 }
@@ -96,14 +95,7 @@ func (bk *Broker) startWorkListener() {
 	go func() {
 		for c := range bk.workCh {
 			id := c.Request().Header.Get(originHeader)
-
-			nd := bk.next()
-			if nd == nil {
-				bk.dispatchCh <- &Message{ID: id, Data: []byte("sin nodos disponibles")}
-				continue
-			}
-
-			go bk.forward(nd, c, id)
+			go bk.forward(c, id)
 		}
 	}()
 }
@@ -132,10 +124,6 @@ func (bk *Broker) startDispatchListener() {
 	}()
 }
 
-func (bk *Broker) startHealthCheck() {
-	// TODO
-}
-
 // next devuelve el siguiente nodo (round-robin) o nil si no hay ninguno.
 func (bk *Broker) next() *node.Node {
 	bk.mu.Lock()
@@ -152,34 +140,53 @@ func (bk *Broker) next() *node.Node {
 }
 
 // forward envía la petición al nodo y deja la respuesta en dispatchCh.
-func (bk *Broker) forward(nd *node.Node, c *client.Client, id string) {
+// Prueba cada nodo hasta que alguno responda; si ningún nodo está activo, devuelve un error al dispatchCh.
+func (bk *Broker) forward(c *client.Client, id string) {
 	in := c.Request()
 
-	// El host es irrelevante: el Transport del nodo siempre marca a su addr.
-	out, err := http.NewRequestWithContext(in.Context(), in.Method, "http://node"+in.RequestURI, in.Body)
+	// El body se lee una sola vez para poder reenviarlo en cada intento.
+	body, err := io.ReadAll(in.Body)
 	if err != nil {
 		bk.dispatchCh <- &Message{ID: id, Data: []byte(err.Error())}
 		return
 	}
-	out.Header = in.Header.Clone() // incluye Pipit-Origin-Id
-	out.ContentLength = in.ContentLength
 
-	resp, err := nd.Do(out)
-	if err != nil {
-		bk.dispatchCh <- &Message{ID: id, Data: []byte(err.Error())}
+	bk.mu.RLock()
+	total := len(bk.nodes)
+	bk.mu.RUnlock()
+
+	lastErr := errors.New("sin nodos disponibles")
+
+	for i := 0; i < total; i++ {
+		nd := bk.next()
+		if nd == nil {
+			break
+		}
+
+		out, err := http.NewRequestWithContext(in.Context(), in.Method, "http://node"+in.RequestURI, bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			break
+		}
+		out.Header = in.Header.Clone() // incluye Pipit-Origin-Id
+
+		resp, err := nd.Do(out)
+		if err != nil {
+			// Si el cliente se fue, no tiene sentido seguir probando nodos.
+			if in.Context().Err() != nil {
+				return
+			}
+			lastErr = err
+			continue // probar con el siguiente nodo
+		}
+
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		bk.dispatchCh <- &Message{ID: id, Data: data}
 		return
 	}
-	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		data = []byte(err.Error())
-	}
-	bk.dispatchCh <- &Message{ID: id, Data: data}
-}
-
-func (bk *Broker) check(ctx context.Context, nd *node.Node, path string, timeout time.Duration) {
-	// TODO
+	bk.dispatchCh <- &Message{ID: id, Data: []byte(lastErr.Error())}
 }
 
 func newID() string {
