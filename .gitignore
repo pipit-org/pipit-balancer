@@ -1,0 +1,18 @@
+# Ignora cualquier .env, excepto los .env.example
+*.env*
+!*.env*.example
+
+# Ignora el directorio tmp/ o .tmp/
+tmp/
+.tmp/
+
+# Ignora la salida de los binarios
+build/**/*
+!build/*.md
+
+# Ignora cosas especificas de algunos entornos
+.vscode
+.idea
+.DS_Store
+is_local
+.claude
