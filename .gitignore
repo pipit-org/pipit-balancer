@@ -8,7 +8,7 @@ tmp/
 
 # Ignora la salida de los binarios
 build/**/*
-!build/*.md
+!build/**/*.md
 
 # Ignora cosas especificas de algunos entornos
 .vscode
