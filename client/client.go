@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-// Node
+// Client
 type Client struct {
 	// Interfaz para comunicarse con el cliente
 	rw http.ResponseWriter

@@ -64,7 +64,7 @@ func (bk *Broker) AddNode(nd *node.Node) {
 // ServeHTTP permite usar el Broker directamente como http.Handler.
 func (bk *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := newID()
-	r.Header.Set(originHeader, id)
+	w.Header().Set(originHeader, id)
 
 	c := client.New(w, r)
 	done := make(chan struct{})
@@ -94,7 +94,7 @@ func (bk *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (bk *Broker) startWorkListener() {
 	go func() {
 		for c := range bk.workCh {
-			id := c.Request().Header.Get(originHeader)
+			id := c.Writer().Header().Get(originHeader)
 			go bk.forward(c, id)
 		}
 	}()
@@ -182,6 +182,7 @@ func (bk *Broker) forward(c *client.Client, id string) {
 
 		data, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
+
 		bk.dispatchCh <- &Message{ID: id, Data: data}
 		return
 	}
